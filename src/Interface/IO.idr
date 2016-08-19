@@ -1,6 +1,7 @@
 module Interface.IO
 
 import Resources
+import Control.IOExcept
 
 %default total
 
@@ -13,6 +14,10 @@ export
 ConsoleIO IO where
   putStr str = lift (putStr str)
   getStr = lift getLine
+
+ConsoleIO (IOExcept err) where 
+  putStr str = lift (ioe_lift (putStr str))
+  getStr = lift (ioe_lift getLine)
 
 using (ConsoleIO io)
   export

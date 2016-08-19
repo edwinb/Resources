@@ -7,5 +7,6 @@ modules = Resources
         , Resource.State
 
         , Interface.IO
+        , Interface.Exception
 
         , Utils.SubList
