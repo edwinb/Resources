@@ -19,6 +19,7 @@ data Var : Resource_sig -> Type where
 
 public export
 interface Execute (r : Resource_sig) (m : Type -> Type) where
+     covering
      exec : inr -> r ty inr outfn -> 
             (k : (x : ty) -> outfn x -> m a) -> m a
 

@@ -2,14 +2,16 @@ module Interface.IO
 
 import Resources
 
+%default total
+
 public export
-interface Monad m => ConsoleIO (m : Type -> Type) where
+interface ConsoleIO (m : Type -> Type) where
   putStr : String -> ResOp m () 
   getStr : ResOp m String
 
 export
 ConsoleIO IO where
-  putStr str = lift (Interactive.putStr str)
+  putStr str = lift (putStr str)
   getStr = lift getLine
 
 using (ConsoleIO io)
