@@ -1,0 +1,9 @@
+package resources
+
+version = 0.1
+
+sourcedir = src
+modules = Resources
+        , Resource.State
+
+        , Utils.SubList
