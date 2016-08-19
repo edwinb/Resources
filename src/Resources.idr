@@ -186,16 +186,16 @@ updateCtxt ((MkRes lbl iface _) :: rs) Here ty
       = ((MkRes lbl iface ty) :: rs)
 updateCtxt (r :: rs) (There x) ty = r :: updateCtxt rs x ty
 
-public export
+export
 data Res : (m : Type -> Type) ->
            (ty : Type) -> 
            List Resource_sig ->
            Context -> (ty -> Context) -> Type where
 
      Pure : (x : val) -> Res m val ops (ctxtk x) ctxtk
-     (>>=) : Res m a ops rs rs' -> 
-             ((x : a) -> Res m b ops (rs' x) rs'') ->
-             Res m b ops rs rs''
+     Bind : Res m a ops rs rs' -> 
+            ((x : a) -> Res m b ops (rs' x) rs'') ->
+            Res m b ops rs rs''
 
      New : (iface : Resource_sig) ->
            {auto prf : Elem iface ops} ->
@@ -214,6 +214,47 @@ data Res : (m : Type -> Type) ->
             {auto ctxt_prf : SubCtxt ys xs} ->
             Res m t ops xs (\result => updateWith (ys' result) xs ctxt_prf)
      Lift : Monad m => m t -> Res m t ops ctxt (const ctxt)
+
+export
+(>>=) : Res m a ops rs rs' -> 
+        ((x : a) -> Res m b ops (rs' x) rs'') ->
+        Res m b ops rs rs''
+(>>=) prog next = Bind prog (\res => next res)
+
+export
+pure : (x : val) -> Res m val ops (ctxtk x) ctxtk
+pure = Pure
+
+export
+new : (iface : Resource_sig) ->
+      {auto prf : Elem iface ops} ->
+      ty ->
+      Res m (Var iface) ops ctxt (\lbl => MkRes lbl iface ty :: ctxt)
+new = New
+
+export
+delete : (lbl : Var iface) -> {auto prf : HasIFace ty iface lbl ctxt} ->
+         Res m () ops ctxt (const (drop ctxt prf))
+delete = Delete
+
+export
+on : (lbl : Var iface) ->
+     {auto prf : HasIFace in_state iface lbl ctxt} ->
+     (op : iface t in_state out_fn) ->
+     Res m t ops ctxt (\result => updateCtxt ctxt prf (out_fn result))
+on = On
+
+export
+call : {auto op_prf : SubList ops' ops} ->
+       Res m t ops' ys ys' ->
+       {auto ctxt_prf : SubCtxt ys xs} ->
+       Res m t ops xs (\result => updateWith (ys' result) xs ctxt_prf)
+call = Call
+
+export
+lift : Monad m => m t -> Res m t ops ctxt (const ctxt)
+lift = Lift
+
 
 public export
 data Action : Type -> Type where
@@ -258,7 +299,7 @@ runRes : Env m inr -> Execs m ops ->
          Res m a ops inr outfn ->
          ((x : a) -> Env m (outfn x) -> m b) -> m b
 runRes env execs (Pure x) k = k x env
-runRes env execs (prog >>= next) k 
+runRes env execs (Bind prog next) k 
   = runRes env execs prog (\prog', env' => runRes env' execs (next prog') k)
 runRes env execs (New {prf} iface val) k 
   = let h = getExecute execs prf in

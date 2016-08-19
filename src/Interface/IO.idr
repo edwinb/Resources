@@ -9,8 +9,8 @@ interface Monad m => ConsoleIO (m : Type -> Type) where
 
 export
 ConsoleIO IO where
-  putStr str = Lift (Interactive.putStr str)
-  getStr = Lift getLine
+  putStr str = lift (Interactive.putStr str)
+  getStr = lift getLine
 
 using (ConsoleIO io)
   export

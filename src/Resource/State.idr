@@ -14,19 +14,17 @@ Execute State m where
 
 export
 update : (name : Var State) -> (a -> b) ->
-         ResTrans m () 
-                  ops -- Things we're allowed to create
-                  [Trans name State a (const b)] -- How we update and use resources
-update name f = do val <- On name Get
-                   On name (Put (f val))
+         ResTrans m () ops [Trans name State a (const b)] 
+update name f = do val <- on name Get
+                   on name (Put (f val))
 
 export
 get : (name : Var State) -> ResTrans m ty ops [Stable name State ty]
-get name = On name Get
+get name = on name Get
 
 export
 put : (name : Var State) -> b -> ResTrans m () ops [Trans name State a (const b)]
-put name val = On name (Put val)
+put name val = on name (Put val)
 
 infix 5 :=
 
