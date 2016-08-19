@@ -6,4 +6,6 @@ sourcedir = src
 modules = Resources
         , Resource.State
 
+        , Interface.IO
+
         , Utils.SubList

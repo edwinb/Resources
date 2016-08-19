@@ -238,6 +238,10 @@ ResTrans m ty ops xs = Res m ty ops (in_res xs) (\x : ty => out_res x xs)
     in_res (Stable lbl sig inr :: xs) = MkRes lbl sig inr :: in_res xs
     in_res (Trans lbl sig inr outr :: xs) = MkRes lbl sig inr :: in_res xs
 
+public export
+ResOp : (m : Type -> Type) -> Type -> Type
+ResOp m ty = {ops : _} -> {ctxt : _} -> Res m ty ops ctxt (const ctxt)
+
 private 
 execRes : Env m ctxt -> 
           (prf : HasIFace in_state iface lbl ctxt) ->
