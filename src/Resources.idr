@@ -222,6 +222,7 @@ export
         Res m b ops rs rs''
 (>>=) prog next = Bind prog (\res => next res)
 
+
 export
 pure : (x : val) -> Res m val ops (ctxtk x) ctxtk
 pure = Pure
@@ -256,6 +257,33 @@ export
 lift : Monad m => m t -> Res m t ops ctxt (const ctxt)
 lift = Lift
 
+namespace Loop
+  public export
+  data ResLoop : (m : Type -> Type) -> (ty : Type) -> 
+                 List Resource_sig -> Context -> Type where
+       Do : Res m a ops inr outfn -> 
+            ((val : a) -> Inf (ResLoop m b ops (outfn val))) ->
+            ResLoop m b ops inr 
+       Call : ResLoop m b ops_sub inr ->
+              {auto prf : SubList ops_sub ops} -> 
+              ResLoop m b ops inr
+       Exit : ty -> ResLoop m ty ops inr
+
+  public export 
+  (>>=) : Res m a ops inr outfn -> 
+          ((val : a) -> Inf (ResLoop m b ops (outfn val))) ->
+          ResLoop m b ops inr 
+  (>>=) = Do
+
+  export
+  exit : ty -> ResLoop m ty ops inr
+  exit = Exit
+      
+  export
+  call : ResLoop m b ops_sub inr ->
+         {auto prf : SubList ops_sub ops} ->
+         ResLoop m b ops inr
+  call = Call
 
 public export
 data Action : Type -> Type where
@@ -318,6 +346,29 @@ runRes env execs (Lift action) k
   = do res <- action
        k res env
 
+export
+data Fuel = Empty | More (Lazy Fuel)
+
+export
+partial forever : Fuel
+forever = More forever
+
+export
+steps : Nat -> Fuel
+steps Z = Empty
+steps (S k) = More (steps k)
+
+loopRes : Applicative m =>
+          Fuel -> Env m inr -> Execs m ops ->
+          ResLoop m a ops inr -> m (Maybe a)
+loopRes (More x) env execs (Do act k) 
+  = runRes env execs act (\res, env' => loopRes x env' execs (k res))
+loopRes (More x) env execs (Call prog {prf}) 
+  = let execs' = dropExecs execs prf in
+        loopRes x env execs' prog
+loopRes x env execs (Exit res) = pure (Just res)
+loopRes Empty _ _ _ = pure Nothing
+
 export total
 run : Applicative m => 
       {auto execs : Execs m ops} -> Res m a ops [] (const []) -> 
@@ -330,4 +381,9 @@ eval : {auto execs : Execs Basics.id ops} ->
        a
 eval {execs} prog = runRes [] execs prog (\res, env' => res)
 
-
+export total
+loop : Applicative m =>
+       Fuel ->
+       {auto execs : Execs m ops} -> ResLoop m a ops [] ->
+       m (Maybe a)
+loop fuel {execs} prog = loopRes fuel [] execs prog
