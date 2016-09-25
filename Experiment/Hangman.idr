@@ -1,24 +1,39 @@
 import Data.Vect
 import States
 
-data HangmanState = Unstarted | Playing String | Won | Lost
+
+data ValOp : State_sig Type where
+     Get : ValOp a a (const a)
+     Put : b -> ValOp () a (const b)
+
+Val : Type -> SM Type
+Val a = MkSM a (const ()) (\x => x) ValOp
+
+Execute (Val ty) m where
+    exec res Get     k = k res res
+    exec res (Put x) k = k () x
+
+data HangmanState = Unstarted | Playing | Won | Lost
 
 data GameEnd : HangmanState -> Type where
      GameWon : GameEnd Won
      GameLost : GameEnd Lost
 
 data HangmanOp : State_sig HangmanState where
-     NewGame : (target : String) -> HangmanOp () Unstarted 
-                                                 (const (Playing (toUpper target)))
-     Play : HangmanOp Bool (Playing word) (\res => case res of
-                                                        True => Won
-                                                        False => Lost)
+     NewGame : (word : String) -> HangmanOp () Unstarted (const Playing)
+     Play : HangmanOp Bool Playing (\res => case res of
+                                                 True => Won
+                                                 False => Lost)
+
+data HangmanData : HangmanState -> Type where
+     Word : String -> HangmanData Playing
+     NoWord : HangmanData x
 
 Hangman : SM HangmanState
-Hangman = MkSM Unstarted GameEnd (const ()) HangmanOp
+Hangman = MkSM Unstarted GameEnd HangmanData HangmanOp
 
 hangman : StateTrans IO () [Hangman] []
-hangman = do game <- New Hangman ()
+hangman = do game <- New Hangman NoWord
              On game $ NewGame "testing"
              result <- On game Play
              case result of
@@ -31,8 +46,7 @@ data GameState = Score Nat Nat
                | NotRunning
 
 data Finished : GameState -> Type where
-     NoGuesses : Finished (Score 0 (S letters))
-     NoLetters : Finished (Score (S guesses) 0)
+     GameFinished : Finished NotRunning
 
 letters : String -> List Char
 letters str = map toUpper (nub (unpack str))
@@ -85,26 +99,27 @@ play {g} {l = S l} game
                                  S k => play game
                 True => do Lift (putStrLn "Correct!")
                            play game
-                                            
-Transform HangmanState GameState Hangman Game [] IO where
-    toState Unstarted = NotRunning
-    toState (Playing word) = Score 6 (length (letters word))
-    toState Won = NotRunning
-    toState Lost = NotRunning
 
-    toResource Unstarted = MkNotRunning False
-    toResource (Playing word) = InProgress word _ (fromList (letters word))
-    toResource Won = MkNotRunning True
-    toResource Lost = MkNotRunning False
+Transform HangmanState Type Hangman (Val String) [Game] IO where
 
-    fromResource x y = ()
+    toState x = String
+    toResource Playing (Word x) = x
+    toResource st NoWord = ""
 
-    transform game (NewGame target) = do On game (SetTarget (toUpper target))
-                                         Lift (putStrLn "Game started!")
-    transform game Play = do result <- play game
+    fromResource Unstarted res = NoWord
+    fromResource Playing res = Word res
+    fromResource Won res = NoWord
+    fromResource Lost res = NoWord
+
+    transform word (NewGame x) = On word (Put x)
+    transform word Play = do x <- On word Get
+                             game <- New Game (MkNotRunning False)
+                             On game (SetTarget (toUpper x))
+                             result <- Call (play game)
+                             Delete game
                              case result of
-                                  False => Pure False
                                   True => Pure True
+                                  False => Pure False
 
 total
 removeElem : (value : a) -> (xs : Vect (S n) a) ->
@@ -131,6 +146,4 @@ Execute Game IO where
     exec res AdmitLoss k = k () (MkNotRunning False)
     exec res GetState k = k (show res) res
     exec res (SetTarget word) k = k () (InProgress word _ (fromList (letters word)))
-
-
 

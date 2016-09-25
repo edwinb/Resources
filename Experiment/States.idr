@@ -133,6 +133,34 @@ data States : (m : Type -> Type) ->
             {auto ctxt_prf : SubCtxt ys xs} ->
             States m t ops xs (\result => updateWith (ys' result) xs ctxt_prf)
 
+public export
+data Action : Type -> Type where
+     Stable : label -> SM state -> state -> Action ty
+     Trans : label -> SM state -> state -> (ty -> state) -> Action ty
+
+public export
+StateTrans : (m : Type -> Type) ->
+             (ty : Type) -> 
+             (ops : PList SM) ->
+             List (Action ty) -> Type
+StateTrans m ty ops xs 
+     = States m ty ops (in_res xs) (\x : ty => out_res x xs)
+  where
+    ctxt : List (Action ty) -> PList SM
+    ctxt [] = []
+    ctxt (Stable lbl sig inr :: xs) = sig :: ctxt xs
+    ctxt (Trans lbl sig inr outr :: xs) = sig :: ctxt xs
+
+    out_res : ty -> (as : List (Action ty)) -> Context (ctxt as)
+    out_res x [] = []
+    out_res x (Stable lbl sig inr :: xs) = MkRes lbl sig inr :: out_res x xs
+    out_res x (Trans lbl sig inr outr :: xs) 
+                                    = MkRes lbl sig (outr x) :: out_res x xs
+
+    in_res : (as : List (Action ty)) -> Context (ctxt as)
+    in_res [] = []
+    in_res (Stable lbl sig inr :: xs) = MkRes lbl sig inr :: in_res xs
+    in_res (Trans lbl sig inr outr :: xs) = MkRes lbl sig inr :: in_res xs
 
 -- Some useful hints for proof construction in polymorphic programs
 %hint
@@ -185,19 +213,17 @@ interface Transform state state'
                     (ops : PList SM)
                     (m : Type -> Type) | sm, m where
     toState : state -> state'
-    toResource : (st : state) -> resource sm' (toState st)
+    toResource : (st : state) ->
+                 (res : resource sm st) -> resource sm' (toState st)
 
-    fromResource : {out_fn : t -> state} ->
-                   {result : t} ->
-                   operations sm t in_state tout_fn ->
-                   resource sm' (toState (tout_fn result)) ->
-                   resource sm (out_fn result)
+    fromResource : (newState : state) ->
+                   (res : resource sm' (toState st)) ->
+                   resource sm newState
 
     transform : (lbl : Var sm') ->
-                operations sm t in_state tout_fn ->
+                (op : operations sm t in_state tout_fn) ->
                 States m t ops [MkRes lbl sm' (toState in_state)]
                    (\result => [MkRes lbl sm' (toState (tout_fn result))])
-
 
 namespace Env
   public export
@@ -316,12 +342,13 @@ export
 (Transform state state' sm sm' ops m, 
  ExecList m ops,
  Execute sm' m) => Execute sm m where
-    exec {in_state} res op k 
-         = let val = toResource {sm} {m} in_state in
+   exec {out_fn} res op k 
+         = let val = toResource {sm} {m} _ res in
                runStates [val] mkExecs (transform {sm} {m} MkVar op) 
-                      (\res', st => 
-                            let st' = headEnv st in 
-                                k res' (fromResource {sm} {m} op st'))
+                      (\result, env => 
+                            let env' = headEnv env in 
+                                k result (fromResource {sm} {m} 
+                                                     (out_fn result) env'))
 
 export total
 run : Applicative m => 

@@ -1,18 +1,35 @@
-module SubList
+module SubList -- FIXME: Rename to PList
 
 import public Data.List
 
 %access public export -- FIXME!
 
--- public export
--- data SubElem : a -> List a -> Type where
---   Z : SubElem a (a :: as)
---   S : SubElem a as -> SubElem a (b :: as)
+data PList : (Type -> Type) -> Type where
+     Nil : PList p
+     (::) : p state -> PList p -> PList p
 
 public export
-data SubList : List a -> List a -> Type where
+(++) : PList p -> PList p -> PList p
+(++) [] ys = ys
+(++) (x :: xs) ys = x :: xs ++ ys
+
+public export
+appendNilRightNeutral : (l : PList p) -> l ++ [] = l
+appendNilRightNeutral [] = Refl
+appendNilRightNeutral (x :: xs) = cong (appendNilRightNeutral xs)
+
+public export
+data PElem : p state -> PList p -> Type where
+     Here : {p : Type -> Type} -> {a : p state} -> PElem {p} a (a :: as)
+     There : PElem a as -> PElem a (b :: as)
+
+Uninhabited (PElem {p} x []) where
+  uninhabited (Here {p} {a}) impossible
+
+public export
+data SubList : PList a -> PList a -> Type where
   SubNil : SubList [] xs
-  InList : Elem x ys -> SubList xs ys -> SubList (x :: xs) ys
+  InList : PElem x ys -> SubList xs ys -> SubList (x :: xs) ys
 
 -- Some useful hints for proof construction in polymorphic programs
 %hint
@@ -23,12 +40,12 @@ dropFirst (InList el sub) = InList (There el) (dropFirst sub)
 
 %hint
 public export total
-subListId : (xs : List a) -> SubList xs xs
+subListId : (xs : PList p) -> SubList xs xs
 subListId [] = SubNil
 subListId (x :: xs) = InList Here (dropFirst (subListId xs))
 
 public export total
-inSuffix : Elem x ys -> SubList xs ys -> Elem x (zs ++ ys)
+inSuffix : PElem x ys -> SubList xs ys -> PElem x (zs ++ ys)
 inSuffix {zs = []} el sub = el
 inSuffix {zs = (x :: xs)} el sub = There (inSuffix el sub)
 
@@ -39,7 +56,7 @@ dropPrefix SubNil = SubNil
 dropPrefix (InList el sub) = InList (inSuffix el sub) (dropPrefix sub)
 
 public export total
-inPrefix : Elem x ys -> SubList xs ys -> Elem x (ys ++ zs)
+inPrefix : PElem x ys -> SubList xs ys -> PElem x (ys ++ zs)
 inPrefix {zs = []} {ys} el sub
     = rewrite appendNilRightNeutral ys in el
 inPrefix {zs = (x :: xs)} Here sub = Here

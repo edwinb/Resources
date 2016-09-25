@@ -7,8 +7,8 @@ import Control.IOExcept
 
 public export
 interface ConsoleIO (m : Type -> Type) where
-  putStr : String -> ResOp m () 
-  getStr : ResOp m String
+  putStr : String -> Act m () 
+  getStr : Act m String
 
 export
 ConsoleIO IO where
@@ -21,14 +21,14 @@ ConsoleIO (IOExcept err) where
 
 using (ConsoleIO io)
   export
-  putStrLn : String -> ResOp io ()
+  putStrLn : String -> Act io ()
   putStrLn str = putStr (str ++ "\n")
 
   export
-  print : Show a => a -> ResOp io ()
+  print : Show a => a -> Act io ()
   print x = putStr (show x)
 
   export
-  printLn : Show a => a -> ResOp io ()
+  printLn : Show a => a -> Act io ()
   printLn x = putStrLn (show x)
 

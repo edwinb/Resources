@@ -7,7 +7,7 @@ import Control.IOExcept
 
 public export
 interface Exception (err : Type) (m : Type -> Type) where
-  throw : err -> ResOp m ()
+  throw : err -> Act m ()
 
 export
 Exception err (IOExcept err) where
