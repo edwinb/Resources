@@ -103,6 +103,7 @@ play {g} {l = S l} game
 Transform HangmanState Type Hangman (Val String) [Game] IO where
 
     toState x = String
+
     toResource Playing (Word x) = x
     toResource st NoWord = ""
 
@@ -146,4 +147,7 @@ Execute Game IO where
     exec res AdmitLoss k = k () (MkNotRunning False)
     exec res GetState k = k (show res) res
     exec res (SetTarget word) k = k () (InProgress word _ (fromList (letters word)))
+
+main : IO ()
+main = run hangman
 
