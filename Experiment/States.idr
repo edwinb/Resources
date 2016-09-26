@@ -3,16 +3,26 @@ module States
 import public PList
 
 public export
-State_sig : Type -> Type
-State_sig state = (t : Type) -> state -> (t -> state) -> Type
+SM_sig : Type -> Type
+SM_sig state = (t : Type) -> state -> (t -> state) -> Type
 
 public export 
 record SM stateType where
   constructor MkSM
   init       : stateType
   final      : stateType -> Type
-  resource   : stateType -> Type
-  operations : State_sig stateType
+  operations : SM_sig stateType
+
+public export
+interface Execute (state : Type) (sm : SM state) (m : Type -> Type) where
+     resource : state -> Type
+     initialise : resource (init sm)
+
+     covering
+     exec : (res : resource in_state) -> 
+            (ops : operations sm ty in_state out_fn) -> 
+            (k : (x : ty) -> resource (out_fn x) -> m a) -> m a
+
 
 public export
 data Resource : SM state -> Type where
@@ -22,12 +32,6 @@ public export
 data Var : SM state -> Type where
      MkVar : Var r
 
-public export
-interface Execute (sm : SM state) (m : Type -> Type) where
-     covering
-     exec : (res : resource sm in_state) -> 
-            (ops : operations sm ty in_state out_fn) -> 
-            (k : (x : ty) -> resource sm (out_fn x) -> m a) -> m a
 
 -- This needs to be a specialised type, rather than a generic List,
 -- because resources might contain List as a type, and we'd end up with
@@ -116,7 +120,6 @@ data States : (m : Type -> Type) ->
 
      New : (sm : SM state) ->
            {auto prf : PElem sm ops} ->
-           (val : resource sm (init sm)) ->
            States m (Var sm) ops ctxt 
                     (\lbl => MkRes lbl sm (init sm) :: ctxt)
      Delete : (lbl : Var iface) -> 
@@ -212,14 +215,13 @@ interface Transform state state'
                     (sm : SM state) (sm' : SM state')
                     (ops : PList SM)
                     (m : Type -> Type) | sm, m where
+    -- Explain how our state corresponds to the inner machine's state
     toState : state -> state'
-    toResource : (st : state) ->
-                 (res : resource sm st) -> resource sm' (toState st)
+    -- Make sure the initial and final states correspond. 
+    initOK : init sm' = toState (init sm) -- 'Refl' should usually work
+    finalOK : (x : state) -> final sm x -> final sm' (toState x)
 
-    fromResource : (newState : state) ->
-                   (res : resource sm' (toState st)) ->
-                   resource sm newState
-
+    -- Implement our operations in terms of the inner operations
     transform : (lbl : Var sm') ->
                 (op : operations sm t in_state tout_fn) ->
                 States m t ops [MkRes lbl sm' (toState in_state)]
@@ -229,14 +231,14 @@ namespace Env
   public export
   data Env : (m : Type -> Type) -> Context ts -> Type where
        Nil : Env m []
-       (::) : Execute sm m => 
-              resource sm a -> Env m xs -> Env m (MkRes lbl sm a :: xs)
+       (::) : (exec : Execute state sm m) => 
+              resource @{exec} a -> Env m xs -> Env m (MkRes lbl sm a :: xs)
 
 namespace Execs
   public export
   data Execs : (m : Type -> Type) -> PList SM -> Type where
        Nil : Execs m []
-       (::) : Execute res m -> Execs m xs -> Execs m (res :: xs)
+       (::) : Execute state res m -> Execs m xs -> Execs m (res :: xs)
 
 dropVal : (prf : HasIFace st sm lbl ctxt) ->
           Env m ctxt -> Env m (drop ctxt prf)
@@ -255,7 +257,8 @@ dropEnv (x :: xs) (InCtxt idx rest)
     = let [e] = envElem idx (x :: xs) in
           e :: dropEnv (x :: xs) rest
 
-getExecute : Execs m rs -> PElem sm rs -> Execute sm m
+getExecute : (execs : Execs m rs) -> (pos : PElem sm rs) -> 
+             Execute _ sm m
 getExecute (h :: hs) Here = h
 getExecute (h :: hs) (There p) = getExecute hs p
 
@@ -272,22 +275,26 @@ dropExecs (x :: xs) (InList idx rest)
     = let [e] = execsElem idx (x :: xs) in
           e :: dropExecs (x :: xs) rest
 
+getEnvExecute : {xs, ys : Context ts} ->
+                ElemCtxt (MkRes lbl sm val) xs -> Env m ys -> Execute _ sm m
+getEnvExecute HereCtxt (h :: hs) = %implementation
+getEnvExecute (ThereCtxt p) (h :: hs) = getEnvExecute p hs
 
-replaceEnvAt : {xs, ys : Context ts} ->
+replaceEnvAt : (exec : Execute _ sm m) =>
+               {xs, ys : Context ts} ->
                (idx : ElemCtxt (MkRes lbl sm val) xs) -> 
-               (resource sm st) ->
                (env : Env m ys) ->
+               (resource @{exec} st) ->
                Env m (updateAt idx st ys)
-replaceEnvAt HereCtxt x (y :: ys) = x :: ys
-replaceEnvAt (ThereCtxt p) x (y :: ys) = y :: replaceEnvAt p x ys
+replaceEnvAt @{exec} HereCtxt (y :: ys) x = (::) @{exec} x ys
+replaceEnvAt (ThereCtxt p) (y :: ys) x = y :: replaceEnvAt p ys x
 
 rebuildEnv : {ys, ys' : Context ts} ->
              Env m ys' -> (prf : SubCtxt ys inr) -> Env m inr ->
              Env m (updateWith ys' inr prf)
 rebuildEnv [] SubNil env = env
-rebuildEnv (res :: xs) (InCtxt {x = MkRes lbl sm val} idx rest) env 
-     = let rec = rebuildEnv xs rest env in
-           replaceEnvAt idx res (rebuildEnv xs rest env)
+rebuildEnv ((::) {a} res xs) (InCtxt {x = MkRes lbl sm val} idx rest) env 
+      = replaceEnvAt idx (rebuildEnv xs rest env) res
 
 private
 execRes : Env m ctxt ->
@@ -310,9 +317,10 @@ runStates env execs (Bind prog next) k
 runStates env execs (Lift action) k 
      = do res <- action
           k res env
-runStates env execs (New {prf} sm val) k 
-     = let h = getExecute execs prf in
-           k MkVar (val :: env)
+runStates env execs (New {prf} sm) k 
+     = let h = getExecute execs prf
+           res = initialise @{h} in
+           k MkVar (res :: env)
 runStates env execs (Delete {prf} lbl) k 
      = k () (dropVal prf env)
 runStates env execs (On {prf} lbl op) k 
@@ -332,26 +340,45 @@ ExecList m [] where
   mkExecs = []
 
 export
-(Execute res m, ExecList m xs) => ExecList m (res :: xs) where
+(Execute _ res m, ExecList m xs) => ExecList m (res :: xs) where
   mkExecs = %implementation :: mkExecs
 
-headEnv : Env m [MkRes v sm x] -> resource sm x
+headEnvType : {sm : SM state} ->
+              Env m [MkRes v sm x] -> Execute state sm m
+headEnvType {sm} {m} {x} (h :: hs) = %implementation 
+
+headEnv : (env : Env m [MkRes v sm x]) -> resource @{headEnvType env} x
 headEnv (x :: xs) = x
 
+transHelp : {out_fn : a -> state} ->
+            (trans : Transform state state' sm sm' ops m) =>
+            {env : Env m [MkRes MkVar sm' (toState @{trans} (out_fn x))]} ->
+            (x : a) -> 
+            (res : resource @{headEnvType env} (toState @{trans} (out_fn x))) ->
+            ((x : a) -> resource @{headEnvType env} (toState @{trans} (out_fn x)) -> m b) -> 
+            m b
+transHelp x res k = k x res
+
+-- Yuck. Especially the 'believe_me'. Given that at this stage there is only
+-- one possibility for the inner 'Execute', because it's a generic thing we
+-- have to pass in and there's no way of changing it in 'runStates', this
+-- is currently fine. But: how to convince Idris? And will it always be fine?
+-- What if we change 'runStates'?
 export
-(Transform state state' sm sm' ops m, 
+(trans : Transform state state' sm sm' ops m, 
  ExecList m ops,
- Execute sm' m) => Execute sm m where
-   exec {out_fn} res op k 
-         = let val = toResource {sm} {m} _ res in
-               runStates [val] mkExecs (transform {sm} {m} MkVar op) 
-                      (\result, env => 
-                            let env' = headEnv env in 
-                                k result (fromResource {sm} {m} 
-                                                     (out_fn result) env'))
+ lower : Execute state' sm' m) => Execute state sm m where
+   resource @{trans} @{_} @{lower} x = resource @{lower} (toState @{trans} x)
+   initialise @{trans} @{_} @{lower}
+         = rewrite sym (initOK @{trans}) in 
+                   initialise @{lower}
+
+   exec @{trans} @{_} @{lower} {out_fn} res op k = 
+     runStates [res] mkExecs (transform {sm} {m} {tout_fn=out_fn} MkVar op) 
+     (\result, env => let env' = headEnv env in k result (believe_me env'))
 
 export total
-run : Applicative m => 
+run : Monad m => 
       {auto execs : Execs m ops} -> States m a ops [] (const []) -> 
       m a
 run {execs} prog = runStates [] execs prog (\res, env' => pure res)

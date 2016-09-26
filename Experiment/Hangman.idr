@@ -1,15 +1,31 @@
 import Data.Vect
 import States
 
+{- We'll need this later... -}
+total
+removeElem : (value : a) -> (xs : Vect (S n) a) ->
+             {auto prf : Elem value xs} ->
+             Vect n a
+removeElem value (value :: ys) {prf = Here} = ys
+removeElem {n = Z} value (y :: []) {prf = There later} = absurd later
+removeElem {n = (S k)} value (y :: ys) {prf = There later}
+                                          = y :: removeElem value ys
+
 {- Read and write mutable values -}
-data ValOp : State_sig Type where
+data ValOp : SM_sig Type where
      Get : ValOp a a (const a)
      Put : b -> ValOp () a (const b)
 
-Val : Type -> SM Type
-Val a = MkSM a (const ()) (\x => x) ValOp
+-- Mutable value state machine
+Val : SM Type
+Val = MkSM () -- Initial state
+           (const ()) -- All states are valid final states
+           ValOp -- Operations on the state machine
 
-Execute (Val ty) m where
+Execute Type Val m where
+    resource x = x
+    initialise = () -- No value stored at first
+
     exec res Get     k = k res res
     exec res (Put x) k = k () x
 
@@ -23,7 +39,7 @@ data GameEnd : HangmanState -> Type where
      GameLost : GameEnd Lost
 
 {- We can create a new game with a target word, and play the game -}
-data HangmanOp : State_sig HangmanState where
+data HangmanOp : SM_sig HangmanState where
      NewGame : (word : String) -> HangmanOp () Unstarted (const Playing)
      Play : HangmanOp Bool Playing (\res => case res of
                                                  True => Won
@@ -34,11 +50,13 @@ data HangmanData : HangmanState -> Type where
      NoWord : HangmanData x
 
 Hangman : SM HangmanState
-Hangman = MkSM Unstarted GameEnd HangmanData HangmanOp
+Hangman = MkSM Unstarted -- Initial state
+               GameEnd -- Predicate for final states
+               HangmanOp -- Operations on the state machine
 
 {- Top level game, creates a new game then plays it -}
 hangman : StateTrans IO () [Hangman] []
-hangman = do game <- New Hangman NoWord
+hangman = do game <- New Hangman
              On game $ NewGame "testing"
              result <- On game Play
              case result of
@@ -59,7 +77,7 @@ data Finished : GameState -> Type where
 letters : String -> List Char
 letters str = map toUpper (nub (unpack str))
 
-data GameOp : State_sig GameState where
+data GameOp : SM_sig GameState where
      {- We can guess a character if there are still both guesses remaining
         and letters to guess. The result determines whether we lose a guess,
         or lose a letter -}
@@ -83,23 +101,8 @@ data GameOp : State_sig GameState where
                                       (const (Score 6 (length (letters word))))
 
 
-{- Run time representation of the game data -}
-data GameData : GameState -> Type where
-     InProgress : (target : String) -> (g : Nat) ->
-                  (missing : Vect l Char) -> 
-                  GameData (Score g l)
-     MkNotRunning : (won : Bool) -> GameData NotRunning
-
-Show (GameData g) where
-    show (MkNotRunning won) = if won then "Game won" else "Game lost"
-    show (InProgress word guesses missing) 
-         = "\n" ++ pack (map hideMissing (unpack word)) 
-               ++ "\n" ++ show guesses ++ " guesses left"
-      where hideMissing : Char -> Char
-            hideMissing c = if c `elem` missing then '-' else c 
-
 Game : SM GameState
-Game = MkSM NotRunning Finished GameData GameOp
+Game = MkSM NotRunning Finished GameOp
 
 
 {- Implementation of the game rules, starts with a number of guesses and
@@ -123,48 +126,29 @@ play {g} {l = S l} game
                 True => do Lift (putStrLn "Correct!")
                            play game
 
+
 {- Now to define how the 'Hangman' and 'Game' state machines actually run -}
 
-{- Implement 'Hangman' by translating it to a lower level state machine
-   'Val String', which is allowed to create a 'Game' state machine in 
-   the process. -}
-Transform HangmanState Type Hangman (Val String) [Game] IO where
-    {- Type for 'Val' -}
-    toState x = String
+{- Run time representation of the game data -}
+data GameData : GameState -> Type where
+     InProgress : (target : String) -> (g : Nat) ->
+                  (missing : Vect l Char) -> 
+                  GameData (Score g l)
+     MkNotRunning : (won : Bool) -> GameData NotRunning
 
-    {- How 'Hangman' states map to 'Val' -}
-    toResource Playing (Word x) = x
-    toResource st NoWord = ""
+Show (GameData g) where
+    show (MkNotRunning won) = if won then "Game won" else "Game lost"
+    show (InProgress word guesses missing) 
+         = "\n" ++ pack (map hideMissing (unpack word)) 
+               ++ "\n" ++ show guesses ++ " guesses left"
+      where hideMissing : Char -> Char
+            hideMissing c = if c `elem` missing then '-' else c 
 
-    {- How 'Val' states map back to 'Hangman' -}
-    fromResource Unstarted res = NoWord
-    fromResource Playing res = Word res
-    fromResource Won res = NoWord
-    fromResource Lost res = NoWord
+{- Execute 'Game' in IO using 'GameData' -}
+Execute GameState Game IO where
+    resource = GameData
+    initialise = MkNotRunning False
 
-    {- Implement 'Hangman' ops as 'Val'. We're also allowed to create
-       'Game' state machines as required, as it says in the instance header. -}
-    transform word (NewGame x) = On word (Put x)
-    transform word Play = do x <- On word Get
-                             game <- New Game (MkNotRunning False)
-                             On game (SetTarget (toUpper x))
-                             result <- Call (play game)
-                             Delete game
-                             case result of
-                                  True => Pure True
-                                  False => Pure False
-
-total
-removeElem : (value : a) -> (xs : Vect (S n) a) ->
-             {auto prf : Elem value xs} ->
-             Vect n a
-removeElem value (value :: ys) {prf = Here} = ys
-removeElem {n = Z} value (y :: []) {prf = There later} = absurd later
-removeElem {n = (S k)} value (y :: ys) {prf = There later}
-                                          = y :: removeElem value ys
-
-{- Finally, we'll need to be able to execute 'Game' -}
-Execute Game IO where
     exec (InProgress word _ missing) (Guess x) k = 
          case isElem x missing of
               Yes prf => k True (InProgress word _ (removeElem x missing))
@@ -181,7 +165,32 @@ Execute Game IO where
     exec res GetState k = k (show res) res
     exec res (SetTarget word) k = k () (InProgress word _ (fromList (letters word)))
 
+{- Implement 'Hangman' by translating it to a lower level state machine
+   'Val', for storing the word. We can create a 'Game' state machine in 
+   the process. -}
+Transform HangmanState Type Hangman Val [Game] IO where
+    toState Unstarted = () -- No word stored
+    toState Playing = String  -- Word stored
+    toState Won = String
+    toState Lost = String
+
+    initOK = Refl -- Initial states 'Unstarted' and '()' correspond
+    finalOK Won GameWon = () -- All final states are OK
+    finalOK Lost GameLost = () -- (We don't really need this pattern match :))
+
+    {- Implement 'Hangman' ops using 'Val' to store the word. 
+       We're also allowed to create 'Game' state machines as required, as it
+       says in the instance header. -}
+    transform word (NewGame x) = On word (Put x)
+    transform word Play = do x <- On word Get
+                             game <- New Game
+                             On game (SetTarget (toUpper x))
+                             result <- Call (play game)
+                             Delete game
+                             case result of
+                                  True => Pure True
+                                  False => Pure False
+
 {- And then run it... -}
 main : IO ()
 main = run hangman
-
