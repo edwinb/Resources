@@ -5,6 +5,9 @@ version = 0.1
 sourcedir = src
 modules = Resources
         , Resource.State
+        , Resource.Logging.Levels
+        , Resource.Logging.Default
+        , Resource.Logging.Category
 
         , Interface.IO
         , Interface.Exception
